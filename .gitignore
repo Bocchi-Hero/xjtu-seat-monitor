@@ -40,10 +40,11 @@ build/
 .mypy_cache/
 .ruff_cache/
 
-# ===== deploy temp =====
+# ===== deploy temp / release build =====
 _deploy*.py
 _upload*.py
 _deploy.tgz
+dist/
 
 # ===== OS / IDE =====
 .DS_Store
