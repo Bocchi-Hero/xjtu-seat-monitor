@@ -1,0 +1,32 @@
+# Copy to config.yaml and edit. NEVER commit config.yaml.
+
+# Campus SSO (used for login / re-login)
+account: "YOUR_STUDENT_ID"
+password: "YOUR_PASSWORD"
+student_code: ""   # filled automatically after login when possible
+
+# Classes to watch
+courses:
+  - name: "Course display name"
+    teaching_class_id: "20262027XXXXXXXX01"
+
+# Polling (seconds)
+poll_interval_sec: 20
+poll_jitter_sec: 5
+alert_cooldown_sec: 600
+session_check_every: 50
+
+# Email: provider = qq | gmail | qq_starttls | custom
+mail:
+  enabled: true
+  provider: qq
+  from_addr: "you@qq.com"
+  to_addr: "you@qq.com"
+  password: "SMTP_AUTH_CODE"   # QQ auth code / Gmail app password — not login password
+  # custom:
+  # host: "smtp.example.com"
+  # port: 465
+  # use_ssl: true
+
+session_file: "session.json"
+log_file: "monitor.log"

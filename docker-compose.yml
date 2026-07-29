@@ -1,0 +1,13 @@
+services:
+  seat-monitor:
+    build: .
+    container_name: xjtu-seat-monitor
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./session.json:/app/session.json
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+    # Uncomment if campus APIs require host network/VPN:
+    # network_mode: host

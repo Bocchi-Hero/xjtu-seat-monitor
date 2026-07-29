@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>选课空位监控</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+SC:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/panel.css?v=6" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">选课监控</div>
+      <nav class="nav">
+        <button type="button" class="nav-item active" data-page="home">总览</button>
+        <button type="button" class="nav-item" data-page="courses">盯课</button>
+        <button type="button" class="nav-item" data-page="settings">设置</button>
+        <button type="button" class="nav-item" data-page="logs">日志</button>
+      </nav>
+      <div class="side-foot mono" id="serverTime"></div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button type="button" class="menu-btn" id="btnMenu" aria-label="菜单">☰</button>
+        <h1 id="pageTitle">总览</h1>
+        <button type="button" class="btn ghost sm" id="btnRefresh">刷新</button>
+      </header>
+
+      <div id="toast" class="toast" hidden></div>
+
+      <!-- 总览：一眼看监控 + 满/空 -->
+      <section class="page active" id="page-home">
+        <div class="hero-grid">
+          <article class="hero-card" id="heroMon">
+            <div class="hero-label">监控</div>
+            <div class="hero-value" id="stMonitor">—</div>
+            <div class="hero-sub" id="stMonitorSub"></div>
+          </article>
+          <article class="hero-card" id="heroSess">
+            <div class="hero-label">登录</div>
+            <div class="hero-value" id="stSession">—</div>
+            <div class="hero-sub" id="stSessionSub"></div>
+          </article>
+        </div>
+
+        <p class="focus" id="focusLine">加载中…</p>
+
+        <div class="home-actions">
+          <button type="button" class="btn go" id="btnStart">开始监控</button>
+          <button type="button" class="btn danger" id="btnStop">停止</button>
+          <button type="button" class="btn" id="btnCap">查满员</button>
+        </div>
+
+        <h2 class="sec-title">课程空位 <span class="muted" id="capMeta"></span></h2>
+        <div id="homeCourseList" class="seat-list"></div>
+      </section>
+
+      <!-- 盯课 -->
+      <section class="page" id="page-courses">
+        <p class="lead">管理要盯的教学班。改完后请到设置里点保存，或本页点保存。</p>
+        <div class="row-actions">
+          <button type="button" class="btn primary" id="btnSaveCourses">保存盯课</button>
+          <button type="button" class="linkish" id="btnAddBlank">+ 手动加班号</button>
+        </div>
+        <div id="courseCards" class="course-edit-list"></div>
+
+        <h2 class="sec-title">搜索添加</h2>
+        <div class="search-row">
+          <input id="catalogQ" placeholder="课名 / 教师 / 周五…" />
+          <button type="button" class="btn" id="btnSearch">搜索</button>
+        </div>
+        <div id="catalogBox" class="catalog"></div>
+      </section>
+
+      <!-- 设置 -->
+      <section class="page" id="page-settings">
+        <p class="lead">账号、邮箱与检查频率。授权码是邮箱 SMTP 授权码，不是登录密码。</p>
+
+        <h2 class="sec-title">选课账号</h2>
+        <div class="fields">
+          <label>账号<input id="account" autocomplete="username" placeholder="学号 / 统一认证" /></label>
+          <label>密码<input id="password" type="password" placeholder="已保存可留空" autocomplete="current-password" /></label>
+        </div>
+
+        <h2 class="sec-title">邮件通知</h2>
+        <div class="fields">
+          <label>类型
+            <select id="mailProvider">
+              <option value="qq">QQ 邮箱</option>
+              <option value="gmail">Gmail</option>
+            </select>
+          </label>
+          <label>发件<input id="mailFrom" placeholder="name@qq.com" /></label>
+          <label>收件<input id="mailTo" placeholder="可与发件相同" /></label>
+          <label>授权码<input id="mailPassword" type="password" placeholder="已保存可留空" /></label>
+        </div>
+
+        <h2 class="sec-title">检查频率</h2>
+        <div class="fields two">
+          <label>间隔（秒）<input id="pollInterval" type="number" min="5" max="300" /></label>
+          <label>提醒冷却（秒）<input id="cooldown" type="number" min="60" max="3600" /></label>
+        </div>
+
+        <div class="row-actions sticky-actions">
+          <button type="button" class="btn primary" id="btnSave">保存设置</button>
+          <button type="button" class="btn go" id="btnLogin">登录选课</button>
+          <button type="button" class="btn" id="btnMail">发送测试邮件</button>
+        </div>
+      </section>
+
+      <!-- 日志 -->
+      <section class="page" id="page-logs">
+        <div class="row-actions">
+          <button type="button" class="btn" id="btnLogs">刷新日志</button>
+        </div>
+        <pre id="logView" class="log mono"></pre>
+      </section>
+    </div>
+  </div>
+
+  <div class="scrim" id="scrim" hidden></div>
+  <script src="/static/panel.js?v=6"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+# ===== secrets (never commit) =====
+config.yaml
+session.json
+*.local.yaml
+.env
+.env.*
+
+# ===== runtime / logs =====
+data/*
+!data/.gitkeep
+*.log
+*.pid
+monitor_stdout.log
+monitor_stderr.log
+panel_stdout.log
+panel_stderr.log
+
+# ===== generated course dumps =====
+courses_list.json
+courses_list.csv
+courses_list.md
+pe_no_conflict.json
+pe_no_conflict.md
+selected_raw.json
+batches.json
+batches_debug.json
+
+# ===== python =====
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== deploy temp =====
+_deploy*.py
+_upload*.py
+_deploy.tgz
+
+# ===== OS / IDE =====
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
