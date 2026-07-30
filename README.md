@@ -3,21 +3,24 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-green.svg)](https://www.python.org/downloads/)
 
-西安交通大学选课系统 **空位邮件提醒** 工具：后台轮询教学班容量，有人退课出现空位时发邮件。  
+西安交通大学选课系统 **空位邮件提醒** 工具：后台轮询教学班容量，有人退课出现空位时发邮件。
 提供本机 **Web 控制面板**（总览 / 盯课 / 设置 / 日志），无需手改配置文件即可使用。
 
-> **Only notifies — does not auto-select courses.**  
+> **Only notifies — does not auto-select courses.**
 > 仅提醒，不自动提交选课。
 
 ---
 
 ## Features
 
-- 本地面板：一眼查看监控开关与课容量；侧栏多页布局（桌面 + 手机）
-- 邮件：QQ / Gmail SMTP
-- 会话：`session.json` 持久化；Token 刷新；CAS 尽力登录（MFA 需本机处理）
-- 可选脚本：列课、体育冲突粗检、自检、模拟发信
-- Docker：无界面挂机监控
+- **本地面板**：打开浏览器即可操作，无需手写配置
+- **自动盯课**：后台轮询，有人退课即刻邮件通知
+- **邮件提醒**：QQ / Gmail SMTP，空位出现时秒级告警
+- **会话保活**：自动刷新 token，掉线重连 + 连续失败强制通知
+- **日志轮转**：日志自动切割（5MB / 份，保留 3 份），不占磁盘
+- **优雅退出**：收到停止信号时正常结束，不丢数据
+- **可选脚本**：列课、体育冲突检查、自检、模拟发信
+- **Docker**：无界面服务器挂机监控
 
 ---
 
@@ -34,7 +37,7 @@
 
 ### 1️⃣ 安装 Python
 
-从 [python.org](https://www.python.org/downloads/) 下载 **Python 3.10+**（推荐 3.12）。  
+从 [python.org](https://www.python.org/downloads/) 下载 **Python 3.10+**（推荐 3.12）。
 安装时 **务必勾选** ✅ **Add Python to PATH**，否则命令行找不到 `python`。
 
 验证是否装好：打开 cmd 或 PowerShell，输入：
@@ -44,7 +47,7 @@ python --version
 
 ### 2️⃣ 下载本项目
 
-点 GitHub 仓库绿色的 **Code** → **Download ZIP**，解压到某个文件夹（路径不要有中文）。  
+点 GitHub 仓库绿色的 **Code** → **Download ZIP**，解压到某个文件夹（路径不要有中文）。
 或者装了 Git 的话：
 ```bat
 git clone https://github.com/Bocchi-Hero/xjtu-seat-monitor.git
@@ -109,26 +112,57 @@ cd xjtu-seat-monitor
 本机监控需要一直开着电脑。想 24h 挂机的话，可以把 `config.yaml` 和 `session.json` 传到服务器：
 - 本机先完成登录（确保 session.json 有效）
 - 把整个文件夹传到服务器
-- 用 systemd 或 Docker 运行 `monitor.py`（见下面 Linux/Docker 章节）
+- 用 systemd 或 Docker 运行 `monitor.py`（见下面 Linux / Docker 章节）
 
 ---
 
 ## Quick start (Linux / macOS)
 
 ```bash
+# 1. 克隆项目
+git clone https://github.com/Bocchi-Hero/xjtu-seat-monitor.git
+cd xjtu-seat-monitor
+
+# 2. 创建虚拟环境并安装依赖
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+# 3. 复制配置文件
 cp config.example.yaml config.yaml
-# edit config.yaml
+```
+
+### 方式 A：使用面板（推荐）
+
+```bash
 chmod +x start_panel.sh
 ./start_panel.sh
 ```
 
-Or headless monitor only:
+打开 **http://127.0.0.1:18730/**，按面板指引操作。
+
+### 方式 B：命令行（无头模式）
+
+编辑 `config.yaml` 填入账号、课程、邮箱信息，然后：
 
 ```bash
-python -u monitor.py
+# 首次登录（需要本机 CAS 验证）
+python monitor.py --login-only
+
+# 测试邮件配置
+python monitor.py --test-mail
+
+# 开始监控
+python monitor.py
+```
+
+### 方式 C：systemd 服务（服务器 24h）
+
+```bash
+# 编辑 config.yaml 并完成登录后，使用 systemd 管理
+sudo cp xjtu-seat-monitor.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now xjtu-seat-monitor
 ```
 
 ---
@@ -143,63 +177,83 @@ xjtu-seat-monitor/
 ├── CONTRIBUTING.md
 ├── CHANGELOG.md
 ├── requirements.txt
-├── config.example.yaml      # template only
-├── start_panel.bat / .sh    # local web panel
-├── panel_app.py             # Flask entry (127.0.0.1:18730)
-├── panel_service.py
-├── panel_static/            # UI
-├── monitor.py               # watcher process
-├── auth_session.py          # xkfw session / capacity
-├── mailer.py
+├── config.example.yaml         # 配置模板（不要直接改）
+├── start_panel.bat / .sh       # 本地面板启动脚本
+├── panel_app.py                # Flask 面板入口 (127.0.0.1:18730)
+├── panel_service.py            # 面板后端服务
+├── panel_static/               # 面板前端页面
+├── monitor.py                  # 后台监控主进程
+├── auth_session.py             # 选课系统会话 / 容量查询
+├── mailer.py                   # 邮件发送
 ├── Dockerfile
 ├── docker-compose.yml
-├── scripts/                 # optional CLI tools
-│   ├── list_courses.py
-│   ├── pe_conflict_check.py
-│   ├── healthcheck.py
-│   └── simulate_drop.py
+├── scripts/
+│   ├── list_courses.py         # 列出可选课程
+│   ├── pe_conflict_check.py    # 体育课冲突检查
+│   ├── healthcheck.py          # 全流程自检
+│   ├── simulate_drop.py        # 模拟退课（仅测试邮件）
+│   └── build_release.py        # 打包发布
 └── docs/
     └── ARCHITECTURE.md
 ```
 
-**Never commit:** `config.yaml`, `session.json`, `*.log`, personal course dumps.
+**⚠️ 切勿提交到 Git：** `config.yaml`、`session.json`、`*.log`、`courses_list.json`
 
 ---
 
 ## Configuration
 
-See [`config.example.yaml`](config.example.yaml).
+完整字段见 [`config.example.yaml`](config.example.yaml)。
 
-| Key | Meaning |
-|-----|---------|
-| `account` / `password` | Campus SSO |
-| `courses[].teaching_class_id` | Teaching class ID to watch |
-| `mail.provider` | `qq` or `gmail` |
-| `mail.password` | SMTP auth code / app password |
-| `poll_interval_sec` | Check interval (default 20) |
+| 键 | 说明 | 默认值 |
+|:---|:---|:---:|
+| `account` / `password` | 统一认证账号密码 | — |
+| `courses[].name` | 课程显示名（仅日志用） | — |
+| `courses[].teaching_class_id` | 教学班编号 | — |
+| `mail.provider` | 邮件服务商：`qq` / `gmail` / `qq_starttls` / `custom` | `qq` |
+| `mail.from_addr` | 发件邮箱 | — |
+| `mail.to_addr` | 收件邮箱（默认同发件） | `from_addr` |
+| `mail.password` | SMTP 授权码（**不是登录密码**） | — |
+| `poll_interval_sec` | 轮询间隔（秒） | `20` |
+| `poll_jitter_sec` | 随机抖动（秒，防封） | `5` |
+| `alert_cooldown_sec` | 空位提醒邮件冷却（秒） | `600` |
+| `session_check_every` | 每 N 轮做一次会话保活检查 | `50` |
+| `session_fail_cooldown_sec` | 断线通知邮件冷却（秒） | `3600` |
+
+> QQ 邮箱授权码获取：登录 QQ邮箱 → 设置 → 帐户 → 生成授权码
 
 ---
 
-## Docker (monitor only)
+## Docker（服务器无头监控）
 
 ```bash
-cp config.example.yaml config.yaml
-# fill config + produce session.json via local panel login first
+# 1. 在本机完成登录并生成 session.json
+# 2. 将 config.yaml + session.json 传到服务器项目目录
+# 3. 启动容器
 docker compose up -d --build
 ```
 
-The container runs `monitor.py`. Mount `config.yaml` and `session.json`. Host must reach `xkfw.xjtu.edu.cn`.
+容器运行 `monitor.py`，挂载 `config.yaml`（只读）和 `session.json`（可写）。宿主机需要能访问 `xkfw.xjtu.edu.cn`。
+
+如需代理 / VPN 访问校园网，取消 `docker-compose.yml` 中 `network_mode: host` 的注释。
 
 ---
 
 ## CLI utilities
 
-Run from repo root (scripts add parent to `sys.path`):
+所有脚本从项目根目录运行（脚本会自动添加父目录到 `sys.path`）：
 
 ```bash
+# 列出可选课程（需要先登录）
 python scripts/list_courses.py --batch <batch_code>
+
+# 全流程自检：配置、会话、容量接口、进程
 python scripts/healthcheck.py
-python scripts/simulate_drop.py   # test email path only
+
+# 模拟退课（仅测邮件通路，不实际操作）
+python scripts/simulate_drop.py
+
+# 体育课冲突检查
 python scripts/pe_conflict_check.py
 ```
 
@@ -207,9 +261,9 @@ python scripts/pe_conflict_check.py
 
 ## Privacy
 
-- Credentials stay on your machine.
-- Panel listens on **localhost only**.
-- Rotate email auth codes if they were ever pasted into chat or screenshots.
+- 账号密码、邮箱授权码仅保存在本机 `config.yaml` 中。
+- 面板服务仅监听 **localhost（127.0.0.1）**，不对外暴露。
+- 如曾在聊天或截图中泄露过授权码，请及时在邮箱设置中**重新生成**。
 
 ---
 
