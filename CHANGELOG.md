@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-07-30
+
+### Fixed
+
+- **Session dead-loop without notification (critical).** `is_alive()` used
+  `dictionary.do` to probe token validity, but that endpoint returns 200 + valid
+  JSON even after the token expires on `capacity.do`. This meant `ensure_session`
+  always thought the session was healthy and never triggered the "session dead"
+  email, creating an infinite loop of failed queries with no alert.
+- **`auth_session.py`:** `ensure_session` now always calls `refresh_token()`
+  (via lightweight `register.do`) before checking `is_alive()`, guaranteeing a
+  fresh token for every capacity query.
+- **`monitor.py`:** Added `consecutive_session_fails` counter. If 3 consecutive
+  rounds of session errors occur (even if the code claims recovery), a
+  forced notification is sent. Unified session-dead email logic into
+  `notify_session_dead()` with proper cooldown control.
+
 ## [0.1.0] - 2026-07-29
 
 ### Added

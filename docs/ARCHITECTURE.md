@@ -34,3 +34,8 @@
 2. **Local panel** — localhost bind; secrets never returned unmasked to the UI.
 3. **Process detect** — PID file + live check (no dependency on deprecated `wmic`).
 4. **UI IA** — Overview for status; Settings for credentials; Courses for IDs.
+5. **Session recovery — always refresh, never trust probe.** `ensure_session`
+   unconditionally calls `register.do` to obtain a fresh token on every check,
+   rather than relying on `is_alive()` probing `dictionary.do` (which accepts
+   expired tokens). Combined with a consecutive-failure counter in
+   `monitor.py`, this prevents silent dead-loop failures.
