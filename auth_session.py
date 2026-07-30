@@ -214,8 +214,9 @@ class XkfwClient:
         return False
 
     def ensure_session(self, account: str, password: str) -> None:
-        if self.is_alive():
-            return
+        # 优先通过 register.do 刷新 token（轻量，不依赖 cookie 有效性）
+        # 不依赖 is_alive() 判断：dictionary.do 对过期 token 也返回 200，
+        # 而 capacity.do 会拒绝，造成死循环。始终刷新 token 最可靠。
         if self.refresh_token() and self.is_alive():
             return
         log.info("会话失效，尝试完整 CAS 登录…")
