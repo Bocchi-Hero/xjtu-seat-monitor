@@ -15,6 +15,8 @@ poll_interval_sec: 20
 poll_jitter_sec: 5
 alert_cooldown_sec: 600
 session_check_every: 50
+# Session fail email cooldown — only send one "session dead" email per interval
+session_fail_cooldown_sec: 3600
 
 # Email: provider = qq | gmail | qq_starttls | custom
 mail:

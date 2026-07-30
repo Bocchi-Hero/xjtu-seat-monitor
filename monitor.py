@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import logging.handlers
 import random
+import signal
 import sys
 import time
 from pathlib import Path
@@ -39,7 +41,12 @@ ROOT = Path(__file__).resolve().parent
 def setup_log(log_file: str) -> None:
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
     if log_file:
-        handlers.append(logging.FileHandler(ROOT / log_file, encoding="utf-8"))
+        # 自动轮转：单文件最大 5MB，保留 3 个备份
+        handlers.append(
+            logging.handlers.RotatingFileHandler(
+                ROOT / log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+            )
+        )
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -123,6 +130,16 @@ def main() -> None:
     session_ok = True
     consecutive_session_fails = 0
     round_i = 0
+    shutdown = False
+
+    def _handle_sig(signum: int, _frame: object) -> None:
+        nonlocal shutdown
+        sig_name = signal.Signals(signum).name
+        log.info("收到 %s，优雅退出中…", sig_name)
+        shutdown = True
+
+    signal.signal(signal.SIGTERM, _handle_sig)
+    signal.signal(signal.SIGINT, _handle_sig)
 
     def notify_session_dead(detail: str, *, force: bool = False) -> None:
         nonlocal last_session_fail_mail_at, session_ok
@@ -147,7 +164,7 @@ def main() -> None:
         (mail_cfg.get("provider") or "?"),
     )
 
-    while True:
+    while not shutdown:
         round_i += 1
         if round_i % check_every == 1:
             try:

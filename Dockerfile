@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY config.example.yaml ./
 COPY auth_session.py mailer.py monitor.py ./
 
 # Mount config.yaml + session.json at runtime

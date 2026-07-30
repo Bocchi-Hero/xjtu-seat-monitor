@@ -43,8 +43,8 @@ def main() -> int:
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     courses = cfg.get("courses") or []
     mail_cfg = cfg.get("mail") or {}
-    if len(courses) != 2:
-        fail(f"课程数={len(courses)}，期望 2")
+    if len(courses) == 0:
+        fail("课程数为 0，请先添加课程")
         errors.append("courses count")
     else:
         ok(f"盯课 {len(courses)} 门")

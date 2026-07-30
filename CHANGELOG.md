@@ -19,6 +19,19 @@ All notable changes to this project will be documented in this file.
   forced notification is sent. Unified session-dead email logic into
   `notify_session_dead()` with proper cooldown control.
 
+### Changed
+
+- **`monitor.py`:** Replaced `FileHandler` with `RotatingFileHandler`
+  (5 MB max, 3 backups) to prevent log files from growing unbounded.
+- **`monitor.py`:** Added `SIGTERM`/`SIGINT` handlers for graceful shutdown
+  — the main loop exits cleanly instead of being killed mid-iteration.
+- **`config.example.yaml`:** Added `session_fail_cooldown_sec` to document
+  the session-dead email throttling setting.
+- **`scripts/healthcheck.py`:** Removed hardcoded `!= 2` course count check;
+  now only warns when no courses are configured.
+- **`Dockerfile`:** Copy `config.example.yaml` into the image as a reference
+  for users mounting their own config.
+
 ## [0.1.0] - 2026-07-29
 
 ### Added
