@@ -1,31 +1,14 @@
-# ===== secrets (never commit) =====
+# Secrets & local config
 config.yaml
 session.json
 *.local.yaml
 .env
 .env.*
 
-# ===== runtime / logs =====
-data/*
-!data/.gitkeep
+# Runtime
 *.log
 *.pid
-monitor_stdout.log
-monitor_stderr.log
-panel_stdout.log
-panel_stderr.log
-
-# ===== generated course dumps =====
-courses_list.json
-courses_list.csv
-courses_list.md
-pe_no_conflict.json
-pe_no_conflict.md
-selected_raw.json
-batches.json
-batches_debug.json
-
-# ===== python =====
+data/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -40,13 +23,18 @@ build/
 .mypy_cache/
 .ruff_cache/
 
-# ===== deploy temp / release build =====
-_deploy*.py
-_upload*.py
-_deploy.tgz
-dist/
+# User-generated course dumps / personal data
+courses_list.json
+courses_list.csv
+courses_list.md
+pe_no_conflict.json
+pe_no_conflict.md
+selected_raw.json
+batches.json
+batches_debug.json
+circuit.*
 
-# ===== OS / IDE =====
+# OS / editor
 .DS_Store
 Thumbs.db
 desktop.ini

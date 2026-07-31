@@ -108,9 +108,9 @@ def main() -> None:
         _notify_auth_fail(mail_cfg, str(e))
         sys.exit(2)
     except SessionError as e:
-        log.error("会话失败: %s", e)
-        _notify_auth_fail(mail_cfg, str(e))
-        sys.exit(2)
+        # 临时故障(如 register.do 空壳)不退出：主循环的保活/恢复逻辑会持续重试，
+        # 恢复后自动继续监控；若为永久故障，主循环的掉线通知会兜底提醒
+        log.warning("启动时会话校验失败(临时故障?): %s，继续启动，后台自动重试", e)
 
     if args.login_only:
         log.info("登录完成，session 已保存。可部署到服务器跑 python monitor.py")
@@ -204,14 +204,20 @@ def main() -> None:
                     client.ensure_session(account, password)
                     session_ok = True
                     log.info("会话已自动恢复，继续监控")
-                    # 连续多次恢复仍报错 → 说明 register.do 拿到的 token 也不顶用
-                    if consecutive_session_fails >= 3:
-                        log.warning("连续 %d 轮 session 异常，强制发送掉线通知", consecutive_session_fails)
-                        notify_session_dead(f"连续 {int(consecutive_session_fails)} 轮恢复后仍失效", force=True)
-                        consecutive_session_fails = 0
+                    # 已恢复 → 清零计数，不再发「掉线」邮件，避免恢复后误报
+                    consecutive_session_fails = 0
                 except Exception as e2:  # noqa: BLE001
                     log.error("重登失败: %s", e2)
-                    notify_session_dead(f"查容量时会话失效，自动重登失败: {e2}")
+                    # 连续多轮恢复失败才强制通知；单次抖动走邮件冷却即可
+                    if consecutive_session_fails >= 3:
+                        log.warning("连续 %d 轮 session 异常，强制发送掉线通知", consecutive_session_fails)
+                        notify_session_dead(
+                            f"查容量时会话失效，连续 {int(consecutive_session_fails)} 轮自动重登失败: {e2}",
+                            force=True,
+                        )
+                        consecutive_session_fails = 0
+                    else:
+                        notify_session_dead(f"查容量时会话失效，自动重登失败: {e2}")
                 continue
             except Exception as e:  # noqa: BLE001
                 log.warning("[%s] 查询异常: %s", name, e)

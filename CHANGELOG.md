@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-07-31
+
+### Fixed
+
+- **Startup hard-exit on transient session failure.** `ensure_session()` at
+  startup no longer calls `sys.exit(2)` when the session check fails — xkfw
+  occasionally returns an empty shell (`{"data":null,"code":null}`) that
+  self-heals within minutes. The monitor now logs a warning and keeps running;
+  the main loop's recovery/notification logic acts as the safety net.
+- **False-positive "session dead" emails after recovery.** `consecutive_session_fails`
+  is now reset to 0 once the session recovers, so a transient outage no longer
+  triggers a spurious disconnect alert after a successful re-login.
+- **`auth_session.py` `is_alive()` empty-shell guard.** Now treats
+  `{"data":null,"code":null}` as not-alive instead of a healthy probe.
+- **`refresh_token()` 3×2 retry.** Retries `register.do` up to 3 rounds
+  (trying both the cached student number and `"null"`) with a 1.5s pause,
+  tolerating the empty-shell flakiness instead of failing on the first miss.
+
+### Changed
+
+- Simplified `.gitignore`; `start_panel.bat`/`start_panel.sh` marked executable.
+
 ## [0.2.0] - 2026-07-30
 
 ### Fixed

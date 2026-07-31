@@ -191,26 +191,31 @@ class XkfwClient:
             j = r.json()
         except ValueError:
             return False
-        return "code" in j or "data" in j or "dataList" in j
+        return bool(j) and ("code" in j or "data" in j or "dataList" in j)
 
     def refresh_token(self) -> bool:
         """Try register.do without full CAS."""
         num = self.student_code or "null"
-        for candidate in (num, "null"):
-            url = f"{XKFW}/xsxkapp/sys/xsxkapp/student/register.do"
-            try:
-                r = self.http.get(url, params={"number": candidate}, timeout=15)
-                j = r.json()
-            except (requests.RequestException, ValueError):
-                continue
-            if _code_ok(j.get("code")) and j.get("data", {}).get("token"):
-                self.token = j["data"]["token"]
-                if j["data"].get("number"):
-                    self.student_code = j["data"]["number"]
-                self.http.headers["Token"] = self.token
-                self.save()
-                log.info("Token 刷新成功")
-                return True
+        # xkfw 端偶发返回空壳({"data":null,"code":null}，通常几分钟内自愈)，
+        # 多试几轮提高命中率；空壳/异常一律视为失败，绝不抛异常
+        for attempt in range(3):
+            for candidate in (num, "null"):
+                url = f"{XKFW}/xsxkapp/sys/xsxkapp/student/register.do"
+                try:
+                    r = self.http.get(url, params={"number": candidate}, timeout=15)
+                    j = r.json()
+                except (requests.RequestException, ValueError):
+                    continue
+                data = (j or {}).get("data") or {}
+                if _code_ok((j or {}).get("code")) and data.get("token"):
+                    self.token = data["token"]
+                    if data.get("number"):
+                        self.student_code = data["number"]
+                    self.http.headers["Token"] = self.token
+                    self.save()
+                    log.info("Token 刷新成功")
+                    return True
+            time.sleep(1.5)
         return False
 
     def ensure_session(self, account: str, password: str) -> None:
@@ -249,7 +254,7 @@ class XkfwClient:
             raise SessionError(f"容量接口非 JSON: {r.text[:120]}") from e
 
         # some error payloads
-        if isinstance(j.get("code"), str) and j.get("code") not in ("0", "1", ""):
+        if isinstance((j or {}).get("code"), str) and j.get("code") not in ("0", "1", ""):
             msg = j.get("msg") or str(j.get("code"))
             if "登录" in msg or "token" in msg.lower():
                 raise SessionError(msg)
@@ -298,8 +303,8 @@ class XkfwClient:
                 timeout=15,
             )
             dj = dr.json()
-            need = (dj.get("data") or {}).get("need")
-            mfa_state = (dj.get("data") or {}).get("state") or ""
+            need = ((dj or {}).get("data") or {}).get("need")
+            mfa_state = ((dj or {}).get("data") or {}).get("state") or ""
             if need:
                 raise MFARequired(state=mfa_state)
         except MFARequired:
@@ -354,7 +359,7 @@ class XkfwClient:
                 j = r.json()
             except (requests.RequestException, ValueError):
                 continue
-            if _code_ok(j.get("code")) and (j.get("data") or {}).get("token"):
+            if _code_ok((j or {}).get("code")) and ((j or {}).get("data") or {}).get("token"):
                 self.token = j["data"]["token"]
                 if j["data"].get("number"):
                     self.student_code = j["data"]["number"]
