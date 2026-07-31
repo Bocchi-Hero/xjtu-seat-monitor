@@ -71,7 +71,8 @@ def merge_config_update(body: dict[str, Any]) -> dict[str, Any]:
     cfg = load_cfg()
     if "account" in body:
         cfg["account"] = str(body.get("account") or "").strip()
-    if body.get("password"):
+    if "password" in body and body["password"] is not None:
+        # 允许传空串清空已存密码（UI 未填时不应误清，前端不传该字段即可）
         cfg["password"] = str(body["password"])
     if "student_code" in body:
         cfg["student_code"] = str(body.get("student_code") or "").strip()
@@ -102,7 +103,7 @@ def merge_config_update(body: dict[str, Any]) -> dict[str, Any]:
         for key in ("enabled", "provider", "from_addr", "to_addr", "host", "port", "use_ssl"):
             if key in m:
                 mail[key] = m[key]
-        if m.get("password"):
+        if "password" in m and m["password"] is not None:
             mail["password"] = str(m["password"])
         if "enabled" in m:
             mail["enabled"] = bool(m["enabled"])
@@ -224,6 +225,14 @@ def _pid_alive(pid: int) -> bool:
             except Exception:
                 return False
     try:
+        # Linux: 校验 cmdline 里确为 monitor.py，防 PID 被系统回收复用后误判"在运行"
+        if sys.platform != "win32":
+            try:
+                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", "ignore")
+                if "monitor.py" not in cmd:
+                    return False
+            except OSError:
+                return False
         os.kill(pid, 0)
         return True
     except OSError:

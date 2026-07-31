@@ -38,6 +38,41 @@ from mailer import send_mail
 ROOT = Path(__file__).resolve().parent
 
 
+def _edge_trigger(has_room: bool, prev: bool | None) -> bool:
+    """边沿触发：从「无空位/未知」→「有空位」才返回 True（首次即有空位也提醒）。"""
+    return bool(has_room and (prev is False or prev is None))
+
+
+def _acquire_singleton() -> Any:
+    """单实例互斥：防止 panel 与 systemd 同时跑两个 monitor 重复发信。
+
+    返回持有文件锁的文件句柄；锁随进程退出自动释放。
+    拿不到锁说明已有实例在跑，直接退出。
+    """
+    lock_path = ROOT / "monitor.lock"
+    fh = open(lock_path, "a+", encoding="utf-8")
+    try:
+        import fcntl  # POSIX
+
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except ImportError:  # Windows
+        try:
+            import msvcrt
+
+            fh.seek(0)
+            if fh.tell() == 0:
+                fh.write("lock")
+                fh.flush()
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            fh.close()
+            raise SystemExit("已有 monitor 实例在运行（monitor.lock 被占用），退出避免重复发信")
+    except OSError:
+        fh.close()
+        raise SystemExit("已有 monitor 实例在运行（monitor.lock 被占用），退出避免重复发信")
+    return fh
+
+
 def setup_log(log_file: str) -> None:
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
     if log_file:
@@ -95,6 +130,9 @@ def main() -> None:
     client = XkfwClient(session_file=str(ROOT / (cfg.get("session_file") or "session.json")))
     if cfg.get("student_code") and not client.student_code:
         client.student_code = str(cfg["student_code"])
+
+    # 单实例互斥：systemd / panel 双跑时后启动者直接退出，避免重复发信
+    _lock_handle = _acquire_singleton()
 
     try:
         client.ensure_session(account, password)
@@ -242,7 +280,7 @@ def main() -> None:
                     log.debug("[%s] 满 %s", name, status)
 
             # 边沿触发：从无空位/未知 → 有空位；或首次即有空位也提醒一次
-            edge = has_room and (prev is False or prev is None)
+            edge = _edge_trigger(has_room, prev)
             if not edge:
                 continue
 

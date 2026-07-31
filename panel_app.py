@@ -67,6 +67,7 @@ def api_mon_stop():
 @app.get("/api/logs")
 def api_logs():
     n = request.args.get("n", 100, type=int)
+    n = max(1, min(n, 500))  # 防超大/负数参数一次拉走整份日志
     return jsonify({"lines": svc.read_logs(n)})
 
 

@@ -191,7 +191,12 @@ class XkfwClient:
             j = r.json()
         except ValueError:
             return False
-        return bool(j) and ("code" in j or "data" in j or "dataList" in j)
+        if not isinstance(j, dict):
+            return False
+        # 空壳 {"data":null,"code":null}（高峰偶发、几分钟自愈）不能算健康探活结果
+        if j.get("data") is None and j.get("code") is None:
+            return False
+        return "code" in j or "data" in j or "dataList" in j
 
     def refresh_token(self) -> bool:
         """Try register.do without full CAS."""
@@ -259,7 +264,13 @@ class XkfwClient:
             if "登录" in msg or "token" in msg.lower():
                 raise SessionError(msg)
 
-        data = j.get("data") or {}
+        # 高峰期间 xkfw 偶发返回空壳 {"data":null,"code":null}（几分钟自愈）。
+        # 空壳绝不能当成"已满 0/0"——那会静默错过空位；视为会话级异常，
+        # 上层会重试，且不会清零连续失败计数。
+        data = (j or {}).get("data")
+        if not isinstance(data, dict):
+            raise SessionError(f"容量接口返回空壳/无效数据: {str(j or {})[:120]}")
+
         selected = _to_int(data.get("numberOfSelected"))
         capacity = _to_int(data.get("classCapacity"))
         has_room = selected < capacity if capacity > 0 else False

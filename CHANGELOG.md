@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2] - 2026-07-31
+
+### Fixed
+
+- **capacity.do empty-shell misread as "full" (P1, could miss seats).** When xkfw
+  returns `{"data":null,"code":null}` during peak hours, `check_capacity` now
+  raises `SessionError` instead of reporting "已满 0/0" — the caller retries and
+  the failure is no longer treated as a normal "no room" state.
+- **`is_alive()` empty-shell guard now actually catches the shell.** The previous
+  `bool(j) and ("code" in j or ...)` check returned True for
+  `{"data":null,"code":null}` because the keys existed. Now `data is None and
+  code is None` is treated as not-alive (transient).
+- **Panel `/api/logs` unbounded `n`.** Clamped to 1..500 so a bad parameter can't
+  dump the entire log.
+
+### Changed
+
+- **Single-instance lock (`monitor.lock`).** `monitor.py` takes a non-blocking
+  file lock (fcntl on POSIX, msvcrt on Windows) at startup; a second instance
+  (e.g. panel start while systemd is running) exits immediately instead of
+  duplicating alerts.
+- **`_pid_alive` checks `/proc/<pid>/cmdline`** on Linux to avoid a recycled PID
+  being mistaken for a running monitor.
+- **Passwords can now be cleared** from the panel (`"password": ""`), both for
+  the campus account and the SMTP auth code.
+- **Version pins** added upper bounds in `requirements.txt`; new
+  `requirements-dev.txt` with pytest.
+- **Docker**: compose runs as `user: "1000:1000"` so the container doesn't chown
+  `session.json` to root; scripts normalized to LF line endings.
+
+### Added
+
+- **First test suite** (`tests/`, 37 tests): empty-shell handling, edge-trigger
+  alerting, single-instance lock, SMTP config resolution, panel config
+  masking/clearing and course filtering. Run with:
+  `pip install -r requirements-dev.txt && python -m pytest tests/ -q`
+
 ## [0.2.1] - 2026-07-31
 
 ### Fixed

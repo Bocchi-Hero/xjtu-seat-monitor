@@ -3,6 +3,9 @@ services:
     build: .
     container_name: xjtu-seat-monitor
     restart: unless-stopped
+    # 以宿主普通用户(通常 UID 1000)运行，避免容器内 root 写 session.json
+    # 导致宿主机文件属主变成 root。按需改成你的 UID:GID。
+    user: "1000:1000"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./session.json:/app/session.json

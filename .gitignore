@@ -8,6 +8,7 @@ session.json
 # Runtime
 *.log
 *.pid
+monitor.lock
 data/
 __pycache__/
 *.py[cod]
