@@ -105,61 +105,55 @@ def main() -> int:
             pid = int(pid_file.read_text(encoding="utf-8").strip())
         except ValueError:
             pid = None
-    # find by command line
-    try:
-        import subprocess
 
-        out = subprocess.check_output(
-            ["wmic", "process", "where", "name='python.exe'", "get", "processid,commandline"],
-            text=True,
-            errors="ignore",
-        )
-        running_pids = []
-        for line in out.splitlines():
-            if "monitor.py" in line and "-u" in line or ( "monitor.py" in line):
-                parts = line.strip().split()
-                for p in parts[::-1]:
-                    if p.isdigit():
-                        running_pids.append(int(p))
-                        break
-        # simpler: tasklist style via PowerShell not available — parse wmic
-        for line in out.splitlines():
-            if "monitor.py" in line.lower():
-                mon_ok = True
-                # extract last number-like token
-                nums = [t for t in line.replace('"', " ").split() if t.isdigit()]
-                if nums:
-                    pid = int(nums[-1])
-                ok(f"monitor.py 在运行 pid≈{pid or nums}")
-                break
-        if not mon_ok:
-            fail("未发现 monitor.py 进程")
-            errors.append("monitor not running")
-    except Exception as e:
-        # fallback: try OpenProcess
-        if pid:
-            try:
-                os.kill(pid, 0)  # may fail on Windows
-            except OSError:
-                pass
-            try:
-                import ctypes
+    def _find_monitor_pids():
+        """跨平台找 monitor.py 进程：Windows 用 wmic，Linux 用 ps aux。"""
+        import subprocess as sp
 
-                k = ctypes.windll.kernel32
-                h = k.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-                if h:
-                    k.CloseHandle(h)
-                    mon_ok = True
-                    ok(f"PID {pid} 进程存在")
-                else:
-                    fail(f"PID {pid} 不存在")
-                    errors.append("monitor dead")
-            except Exception as e2:
-                fail(f"无法确认进程: {e} / {e2}")
-                errors.append("monitor check fail")
-        else:
-            fail(f"进程检查失败: {e}")
-            errors.append("monitor check fail")
+        pids = []
+        try:
+            if sys.platform == "win32":
+                out = sp.check_output(
+                    ["wmic", "process", "where", "name='python.exe'", "get", "processid,commandline"],
+                    text=True,
+                    errors="ignore",
+                )
+                for line in out.splitlines():
+                    if "monitor.py" in line.lower():
+                        nums = [t for t in line.replace('"', " ").split() if t.isdigit()]
+                        if nums:
+                            pids.append(int(nums[-1]))
+            else:
+                out = sp.check_output(["ps", "aux"], text=True, errors="ignore")
+                for line in out.splitlines():
+                    if "monitor.py" in line and "grep" not in line:
+                        parts = line.split()
+                        if len(parts) > 1 and parts[1].isdigit():
+                            pids.append(int(parts[1]))
+        except Exception:
+            pass
+        return sorted(set(pids))
+
+    running_pids = _find_monitor_pids()
+    # pid_file 指向的进程存活但 ps/wmic 没抓到（如权限/时序）→ 用 /proc 校验后补入
+    if pid and pid not in running_pids:
+        try:
+            if sys.platform == "win32":
+                os.kill(pid, 0)
+                running_pids.append(pid)
+            else:
+                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", "ignore")
+                if "monitor.py" in cmd:
+                    running_pids.append(pid)
+        except OSError:
+            pass
+    running_pids = sorted(set(running_pids))
+    if running_pids:
+        mon_ok = True
+        ok(f"monitor.py 在运行 pid={running_pids}")
+    else:
+        fail("未发现 monitor.py 进程")
+        errors.append("monitor not running")
 
     log_path = ROOT / (cfg.get("log_file") or "monitor.log")
     if log_path.exists():

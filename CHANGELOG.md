@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4] - 2026-07-31
+
+### Fixed
+
+- **`scripts/healthcheck.py` process check was Windows-only.** It invoked
+  `wmic` (a Windows command), so on Linux/macOS the process check always
+  failed with "进程检查失败" and the healthcheck reported errors even when the
+  monitor was fine. Rewritten to be cross-platform: Linux scans `ps aux` with a
+  `/proc/<pid>/cmdline` fallback for the pid file, Windows keeps wmic.
+
 ## [0.2.3] - 2026-07-31
 
 ### Added
