@@ -47,3 +47,33 @@ def test_singleton_lock_released_after_close(tmp_path, monkeypatch):
     fh2 = monitor._acquire_singleton()
     fh2.close()
     assert (tmp_path / "monitor.lock").exists()
+
+
+# ── 空位持续提醒 ──
+
+def test_remind_due_disabled_when_zero():
+    assert monitor._remind_due(1000.0, 0.0, 5000.0, 0) is False
+    assert monitor._remind_due(1000.0, 0.0, 5000.0, -1) is False
+
+
+def test_remind_due_not_yet():
+    # 空位只保持了 1 分钟，remind_min=5 → 不提醒
+    now = 10_000.0
+    assert monitor._remind_due(now - 60, 0.0, now, 5) is False
+
+
+def test_remind_due_due_first_time():
+    now = 10_000.0
+    assert monitor._remind_due(now - 5 * 60 - 1, 0.0, now, 5) is True
+
+
+def test_remind_due_cooldown_between_reminds():
+    now = 10_000.0
+    # 空位持续 30 分钟，上次提醒在 1 分钟前 → 冷却中，不重复
+    assert monitor._remind_due(now - 30 * 60, now - 60, now, 5) is False
+    # 上次提醒在 6 分钟前 → 已过冷却，可再提醒
+    assert monitor._remind_due(now - 30 * 60, now - 6 * 60, now, 5) is True
+
+
+def test_remind_due_no_since():
+    assert monitor._remind_due(0.0, 0.0, 10_000.0, 5) is False

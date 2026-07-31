@@ -34,6 +34,7 @@ from auth_session import (
     XkfwClient,
 )
 from mailer import send_mail
+from notifier import send_webhook
 
 ROOT = Path(__file__).resolve().parent
 
@@ -41,6 +42,17 @@ ROOT = Path(__file__).resolve().parent
 def _edge_trigger(has_room: bool, prev: bool | None) -> bool:
     """边沿触发：从「无空位/未知」→「有空位」才返回 True（首次即有空位也提醒）。"""
     return bool(has_room and (prev is False or prev is None))
+
+
+def _remind_due(since: float, last_remind: float, now: float, remind_min: float) -> bool:
+    """空位持续提醒判定：空位已保持 remind_min 分钟，且距上次补发也超过 remind_min。
+
+    remind_min<=0 表示关闭该功能。
+    """
+    if remind_min <= 0 or since <= 0:
+        return False
+    interval = remind_min * 60
+    return (now - since) >= interval and (now - last_remind) >= interval
 
 
 def _acquire_singleton() -> Any:
@@ -111,6 +123,7 @@ def main() -> None:
     log = logging.getLogger("seat-monitor")
 
     mail_cfg = cfg.get("mail") or {}
+    webhook_cfg = cfg.get("webhook") or {}
     if args.test_mail:
         send_mail(
             mail_cfg,
@@ -118,6 +131,10 @@ def main() -> None:
             "若你收到这封信，说明 Gmail/QQ SMTP 配置正确。\n",
         )
         log.info("测试邮件已发送 → %s", mail_cfg.get("to_addr") or mail_cfg.get("from_addr"))
+        wb = cfg.get("webhook") or {}
+        if (wb.get("url") or "").strip():
+            ok = send_webhook(wb, "[选课监控] 测试推送", "若你收到这条推送，说明 webhook 配置正确。")
+            log.info("测试 webhook 推送: %s", "成功" if ok else "失败")
         return
 
     account = str(cfg.get("account") or "")
@@ -131,19 +148,16 @@ def main() -> None:
     if cfg.get("student_code") and not client.student_code:
         client.student_code = str(cfg["student_code"])
 
-    # 单实例互斥：systemd / panel 双跑时后启动者直接退出，避免重复发信
-    _lock_handle = _acquire_singleton()
-
     try:
         client.ensure_session(account, password)
     except MFARequired as e:
         log.error("%s", e)
         log.error("服务器无交互 MFA 时：请在本机浏览器登录 xkfw，导出 token 到 session.json，再上传服务器。")
-        _notify_auth_fail(mail_cfg, str(e))
+        _notify_auth_fail(mail_cfg, str(e), webhook_cfg)
         sys.exit(2)
     except CaptchaRequired as e:
         log.error("%s", e)
-        _notify_auth_fail(mail_cfg, str(e))
+        _notify_auth_fail(mail_cfg, str(e), webhook_cfg)
         sys.exit(2)
     except SessionError as e:
         # 临时故障(如 register.do 空壳)不退出：主循环的保活/恢复逻辑会持续重试，
@@ -154,16 +168,24 @@ def main() -> None:
         log.info("登录完成，session 已保存。可部署到服务器跑 python monitor.py")
         return
 
+    # 单实例互斥：systemd / panel 双跑时后启动者直接退出，避免重复发信
+    # （--login-only 豁免：它只写 session.json，与监控实例并发无害）
+    _lock_handle = _acquire_singleton()
+
     interval = float(cfg.get("poll_interval_sec") or 20)
     jitter = float(cfg.get("poll_jitter_sec") or 5)
     cooldown = float(cfg.get("alert_cooldown_sec") or 600)
     check_every = int(cfg.get("session_check_every") or 50)
     # 登录掉线邮件冷却，避免每 2 分钟刷信（默认 1 小时）
     session_fail_cooldown = float(cfg.get("session_fail_cooldown_sec") or 3600)
+    # 空位持续提醒：0=关闭；>0 时空位保持 N 分钟补发一封（可配）
+    remind_min = float(cfg.get("respot_remind_min") or 0)
 
     # state: last has_room, last alert time
     last_room: dict[str, bool] = {}
     last_alert_at: dict[str, float] = {}
+    room_since: dict[str, float] = {}      # 空位开始时间（持续提醒用）
+    last_remind_at: dict[str, float] = {}  # 上次「持续提醒」时间
     last_session_fail_mail_at = 0.0
     session_ok = True
     consecutive_session_fails = 0
@@ -186,7 +208,7 @@ def main() -> None:
         if not force and now - last_session_fail_mail_at < session_fail_cooldown:
             log.warning("会话仍异常，邮件冷却中，跳过重复通知")
             return
-        if _notify_auth_fail(mail_cfg, detail):
+        if _notify_auth_fail(mail_cfg, detail, webhook_cfg):
             last_session_fail_mail_at = now
             log.info("已发送「登录掉线」邮件")
         else:
@@ -270,6 +292,33 @@ def main() -> None:
             prev = last_room.get(tcid)
             last_room[tcid] = has_room
             status = f"{selected}/{capacity}"
+            now = time.time()
+
+            # 空位持续提醒：空位保持 remind_min 分钟没人抢时周期补发（可配）
+            if has_room:
+                if prev is not True:
+                    room_since[tcid] = now
+                if _remind_due(room_since.get(tcid, 0), last_remind_at.get(tcid, 0), now, remind_min):
+                    last_remind_at[tcid] = now
+                    r_subject = f"[选课空位-持续] {name} {status}"
+                    r_body = (
+                        f"课程: {name}\n"
+                        f"教学班: {tcid}\n"
+                        f"容量: {selected} / {capacity}\n"
+                        f"空位已持续 {remind_min} 分钟，仍未满。\n"
+                        f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                        f"可能没人注意到，请尽快处理。\n"
+                    )
+                    try:
+                        send_mail(mail_cfg, r_subject, r_body)
+                        send_webhook(webhook_cfg, r_subject, r_body)
+                        log.info("已发持续提醒: %s", r_subject)
+                    except Exception as e:  # noqa: BLE001
+                        log.error("持续提醒发信失败: %s", e)
+            else:
+                room_since.pop(tcid, None)
+                last_remind_at.pop(tcid, None)
+
             if has_room:
                 log.info("[%s] 有空位 %s  id=%s", name, status, tcid)
             else:
@@ -284,7 +333,6 @@ def main() -> None:
             if not edge:
                 continue
 
-            now = time.time()
             if now - last_alert_at.get(tcid, 0) < cooldown:
                 log.info("[%s] 空位中，但仍在冷却期内，跳过邮件", name)
                 continue
@@ -300,6 +348,7 @@ def main() -> None:
             )
             try:
                 send_mail(mail_cfg, subject, body)
+                send_webhook(webhook_cfg, subject, body)
                 last_alert_at[tcid] = now
                 log.info("已发邮件: %s", subject)
             except Exception as e:  # noqa: BLE001
@@ -312,8 +361,8 @@ def main() -> None:
         time.sleep(sleep_s)
 
 
-def _notify_auth_fail(mail_cfg: dict[str, Any], detail: str) -> bool:
-    """Send session-dead email. Returns True if send_mail succeeded."""
+def _notify_auth_fail(mail_cfg: dict[str, Any], detail: str, webhook_cfg: dict[str, Any] | None = None) -> bool:
+    """Send session-dead email (+webhook). Returns True if send_mail succeeded."""
     if not mail_cfg.get("enabled", True):
         return False
     try:
@@ -333,6 +382,7 @@ def _notify_auth_fail(mail_cfg: dict[str, Any], detail: str) -> bool:
                 "本类邮件默认约 1 小时最多提醒一次，避免刷屏。\n"
             ),
         )
+        send_webhook(webhook_cfg or {}, "[选课监控] 登录已掉线", f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n详情: {detail}")
         return True
     except Exception as e:  # noqa: BLE001
         logging.getLogger("seat-monitor").error("掉线通知发信失败: %s", e)

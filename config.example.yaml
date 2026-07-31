@@ -17,6 +17,14 @@ alert_cooldown_sec: 600
 session_check_every: 50
 # Session fail email cooldown — only send one "session dead" email per interval
 session_fail_cooldown_sec: 3600
+# 空位持续提醒：0=关闭；>0 时空位保持 N 分钟后周期补发一封（如 30）
+respot_remind_min: 0
+
+# 可选：Webhook 推送（QQ 机器人 / Server酱 / Bark / 飞书等，POST JSON 到该地址）。
+# 留空 url 则只发邮件。空位出现、掉线、测试时都会同步推送。
+webhook:
+  enabled: true
+  url: ""
 
 # Email: provider = qq | gmail | qq_starttls | custom
 mail:

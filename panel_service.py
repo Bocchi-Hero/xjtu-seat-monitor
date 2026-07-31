@@ -36,6 +36,8 @@ def load_cfg() -> dict[str, Any]:
     data.setdefault("poll_interval_sec", 20)
     data.setdefault("poll_jitter_sec", 5)
     data.setdefault("alert_cooldown_sec", 600)
+    data.setdefault("respot_remind_min", 0)
+    data.setdefault("webhook", {"enabled": True, "url": ""})
     data.setdefault("session_file", "session.json")
     data.setdefault("log_file", "monitor.log")
     return data
@@ -63,6 +65,8 @@ def public_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "poll_interval_sec": cfg.get("poll_interval_sec", 20),
         "poll_jitter_sec": cfg.get("poll_jitter_sec", 5),
         "alert_cooldown_sec": cfg.get("alert_cooldown_sec", 600),
+        "respot_remind_min": cfg.get("respot_remind_min", 0),
+        "webhook": {"enabled": bool((cfg.get("webhook") or {}).get("enabled", True)), "url": (cfg.get("webhook") or {}).get("url", "")},
         "mail": mail,
     }
 
@@ -91,12 +95,20 @@ def merge_config_update(body: dict[str, Any]) -> dict[str, Any]:
                 }
             )
         cfg["courses"] = courses
-    for k in ("poll_interval_sec", "poll_jitter_sec", "alert_cooldown_sec"):
+    for k in ("poll_interval_sec", "poll_jitter_sec", "alert_cooldown_sec", "respot_remind_min"):
         if k in body and body[k] is not None:
             try:
                 cfg[k] = int(body[k])
             except (TypeError, ValueError):
                 pass
+    if "webhook" in body and isinstance(body["webhook"], dict):
+        wh = dict(cfg.get("webhook") or {})
+        w = body["webhook"]
+        if "url" in w:
+            wh["url"] = str(w["url"] or "").strip()
+        if "enabled" in w:
+            wh["enabled"] = bool(w["enabled"])
+        cfg["webhook"] = wh
     if "mail" in body and isinstance(body["mail"], dict):
         mail = dict(cfg.get("mail") or {})
         m = body["mail"]

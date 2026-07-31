@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2026-07-31
+
+### Added
+
+- **Webhook notifications (`notifier.py`).** POST JSON to any URL (QQ bot /
+  Server酱 / Bark / 飞书 / custom), configurable via `webhook: {enabled, url}`.
+  Fires alongside email for: free-seat alerts, sustained-seat reminders and
+  session-dead notifications. `--test-mail` also tests the webhook.
+- **Sustained-seat reminders (`respot_remind_min`).** If a seat stays free and
+  nobody grabs it, a follow-up alert is sent every N minutes (default 0 =
+  disabled). Previously a free seat was only announced once, ever.
+
+### Fixed
+
+- **`--login-only` blocked by the single-instance lock.** Login/session refresh
+  now happens before the lock is acquired, so you can re-export a session while
+  the systemd monitor is running. The lock now only guards the polling loop.
+
+### Changed
+
+- Panel config API exposes `respot_remind_min` and `webhook` (masked-safe URL,
+  enabled flag); `config.example.yaml` documents both.
+
 ## [0.2.2] - 2026-07-31
 
 ### Fixed
