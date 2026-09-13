@@ -43,3 +43,9 @@ desktop.ini
 .vscode/
 *.swp
 *~
+
+# MFA pending-session state (holds CAS cookies)
+.mfa_state.json
+
+# Local backups (may contain config.yaml with secrets)
+.backups/

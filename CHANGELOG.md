@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-09-13
+
+### Added
+
+- **Session renewal tool `scripts/mfa_login.py` (two-factor auth / trusted client).**
+  XJTU CAS uses a *dynamic* MFA strategy: a new device or a long-idle account is asked
+  for a second factor (secure-phone SMS / secure-email code). On a headless server
+  nobody can read that code, so re-login always failed — this is the real root cause
+  behind "expired token needs manual fixing". The tool covers the whole chain:
+  - `probe` — read-only: whether MFA is required, which methods are available, and the
+    masked phone/email the code would be sent to;
+  - `start` / `start --type securephone|secureemail` — trigger the verification and
+    persist the pending session state (`.mfa_state.json`, mode 0600);
+  - `verify --code` — finish the login and write `session.json`;
+  - `start --wait-mail` — send the code to the secure email, read it back over IMAP and
+    log in fully unattended;
+  - `auto` — log in without a code; exit code 3 means a human is needed.
+  The login form now carries `trustAgent=true` ("trust this client"), after which the
+  dynamic strategy skips the second factor and `ensure_session()` can re-login on its
+  own again.
+
+- **Secure-email code reading (`mail_mfa` config).**
+  `auth_session.read_mfa_code_from_mailbox()` polls the secure mailbox over IMAP and
+  extracts the 6-digit code sent by `xjtulogin@xjtu.edu.cn`. `full_login()` now runs the
+  "send code → read code → validate" chain automatically when MFA is demanded, and only
+  falls back to `MFARequired` when that fails. `user`/`password` default to
+  `mail.from_addr`/`mail.password` (a QQ auth code works for both SMTP and IMAP).
+
+- `XkfwClient(session_file, mail_mfa_cfg)` gained its second parameter; the panel's
+  "login" button and the monitor now share `make_client()` and both take the automatic
+  path.
+
+### Fixed
+
+- **Startup MFA failure caused a systemd crash loop.** `MFARequired` / `CaptchaRequired`
+  used to `sys.exit(2)`, so systemd restarted the unit every 10s, spamming "session
+  dead" emails until it gave up and the service stayed dead. Both are now logged,
+  alerted once and retried while the process keeps running, so a restored session
+  resumes without restarting the service.
+- `full_login()` now sends the browser's `loginType=passwordLogin` parameter to `mfa/detect`.
+- `session.json` is tightened to mode 0600 after every write (it holds a token and CAS cookies).
+
+### Changed
+
+- Docs: README gained a "session renewal / two-factor auth" section;
+  `config.example.yaml` documents the new `mail_mfa` block (disabled by default).
+- `.gitignore` now covers `.mfa_state.json` and `.backups/`.
+
 ## [0.2.4] - 2026-07-31
 
 ### Fixed

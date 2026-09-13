@@ -4,16 +4,27 @@ XJTU xkfw session: load/save, capacity check, lightweight re-login.
 Full CAS (MFA/captcha) is interactive — on a server, prefer:
   1) run once interactively to create session.json
   2) overnight: refresh via register.do; if dead, email + exit or wait
+
+二次认证（安全手机 / 安全邮箱）：CAS 用「动态 MFA 策略」，新设备或长期未登录时
+会要求验证码。两条免人工的路子：
+  * 首次登录时带 trustAgent=true（见 scripts/mfa_login.py），把本机登记为
+    「可信客户端」，之后动态策略默认跳过二次认证；
+  * 万一仍被要求验证码，且安全邮箱就是项目里已配置的那个邮箱，
+    可用 read_mfa_code_from_mailbox() 走 IMAP 读码自动完成（mail_mfa 配置）。
 """
 
 from __future__ import annotations
 
 import base64
+import email
+import imaplib
 import json
 import logging
 import os
 import re
+import stat
 import time
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +102,154 @@ def _code_ok(code: Any) -> bool:
     return code in (0, 1, "0", "1")
 
 
+# ── 安全邮箱验证码（IMAP 读码）────────────────────────────────────────────
+
+# provider → (imap host, port)
+IMAP_HOSTS: dict[str, tuple[str, int]] = {
+    "qq": ("imap.qq.com", 993),
+    "qq_starttls": ("imap.qq.com", 993),
+    "gmail": ("imap.gmail.com", 993),
+}
+
+
+def _message_text(msg: "email.message.Message") -> str:
+    """取邮件所有 text/plain + text/html 正文（解码后拼接）。"""
+    chunks: list[str] = []
+    for part in msg.walk():
+        if part.get_content_type() not in ("text/plain", "text/html"):
+            continue
+        try:
+            payload = part.get_payload(decode=True)
+            if payload is None:
+                continue
+            chunks.append(payload.decode(part.get_content_charset() or "utf-8", "replace"))
+        except (LookupError, ValueError, UnicodeDecodeError):
+            continue
+    return "\n".join(chunks)
+
+
+def _extract_code(text: str) -> str:
+    """从邮件正文里抽 6 位验证码。样例：「验证码990610(有效期5分钟)」。
+
+    只认 6 位数字，避免把「验证码…2026 年」这类年份当成验证码。
+    """
+    if not text:
+        return ""
+    for pattern in (
+        r"验证码[^0-9]{0,8}(\d{6})",
+        r"(?:验证|校验|动态)码[^0-9]{0,8}(\d{6})",
+        r"(?:code|Code|CODE)[^0-9]{0,8}(\d{6})",
+    ):
+        m = re.search(pattern, text)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _is_auth_mail(msg: "email.message.Message") -> bool:
+    """粗判是否是统一身份认证发来的邮件（发件人/主题）。"""
+    sender = str(msg.get("From") or "").lower()
+    subject = str(msg.get("Subject") or "")
+    return "xjtu.edu.cn" in sender or any(k in subject for k in ("认证", "验证", "安全", "登录"))
+
+
+def _fetch_mfa_code_once(host: str, port: int, user: str, password: str,
+                         since_ts: float, scan: int = 15) -> str:
+    """连一次 IMAP，从最新的邮件往前找验证码；找不到返回 ""。
+
+    先只看认证中心发来的邮件，都没有再放宽到任意邮件。
+    """
+    box = imaplib.IMAP4_SSL(host, port, timeout=20)
+    try:
+        box.login(user, password)
+        box.select("INBOX", readonly=True)
+        typ, dat = box.search(None, "ALL")
+        if typ != "OK":
+            return ""
+
+        candidates: list[tuple[bool, str]] = []   # (是否认证邮件, 正文)
+        for num in reversed((dat[0] or b"").split()[-scan:]):
+            try:
+                typ, d = box.fetch(num, "(RFC822)")
+            except imaplib.IMAP4.error:
+                continue
+            if typ != "OK" or not d or not d[0]:
+                continue
+            msg = email.message_from_bytes(d[0][1])
+            try:
+                ts = parsedate_to_datetime(msg.get("Date")).timestamp()
+            except (TypeError, ValueError):
+                ts = 0.0
+            # 只认本次请求前后到达的邮件，避免拿到上一次的旧验证码
+            if since_ts and ts and ts < since_ts - 120:
+                continue
+            candidates.append((_is_auth_mail(msg), _message_text(msg)))
+
+        for auth_mail_only in (True, False):
+            for is_auth, text in candidates:
+                if auth_mail_only and not is_auth:
+                    continue
+                code = _extract_code(text)
+                if code:
+                    log.info("已从安全邮箱读到验证码（%d 位）", len(code))
+                    return code
+        return ""
+    finally:
+        try:
+            box.logout()
+        except (imaplib.IMAP4.error, OSError):
+            pass
+
+
+def read_mfa_code_from_mailbox(cfg: dict[str, Any], *, since_ts: float = 0.0,
+                               timeout_sec: float = 180.0, poll_sec: float = 6.0) -> str:
+    """轮询安全邮箱，读取统一身份认证发来的验证码；超时/不可用返回 ""。
+
+    cfg 可用字段（host/port 缺失时按 provider 推断，默认 QQ 邮箱）::
+
+        enabled: true            # 是否启用（False 时调用方不应调用）
+        provider: qq             # qq / gmail
+        host: imap.qq.com        # 可覆盖
+        port: 993
+        user: xxx@qq.com         # 缺省用 mail.from_addr
+        password: <IMAP 授权码>   # QQ 的 SMTP 授权码同时可用于 IMAP
+        timeout_sec: 180
+
+    注意：QQ 邮箱需要在「设置 → 账户」里开启 IMAP/SMTP 服务（生成授权码时一并开启）。
+    """
+    cfg = cfg or {}
+    user = str(cfg.get("user") or cfg.get("from_addr") or "").strip()
+    password = str(cfg.get("password") or "")
+    if not user or not password:
+        log.warning("mail_mfa 缺少 user/password，无法自动读码")
+        return ""
+
+    host = str(cfg.get("host") or "").strip()
+    port = int(cfg.get("port") or 0)
+    if not host:
+        provider = str(cfg.get("provider") or "qq").lower()
+        host, default_port = IMAP_HOSTS.get(provider, ("imap.qq.com", 993))
+        port = port or default_port
+    if not port:
+        port = 993
+
+    timeout_sec = float(cfg.get("timeout_sec") or timeout_sec)
+    deadline = time.time() + timeout_sec
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            code = _fetch_mfa_code_once(host, port, user, password, since_ts)
+            if code:
+                return code
+        except (imaplib.IMAP4.error, OSError, UnicodeDecodeError) as e:
+            log.warning("读安全邮箱失败(第 %d 次): %s", attempt, e)
+        if time.time() >= deadline:
+            log.warning("等待安全邮箱验证码超时（%.0fs）", timeout_sec)
+            return ""
+        time.sleep(poll_sec)
+
+
 def _fingerprint() -> str:
     """Stable-ish device id without browser (SHA-ish via hash)."""
     import hashlib
@@ -120,12 +279,19 @@ def _encrypt_password(plaintext: str, pem: str) -> str:
 
 
 class XkfwClient:
-    def __init__(self, session_file: str = "session.json"):
+    def __init__(self, session_file: str = "session.json",
+                 mail_mfa_cfg: dict[str, Any] | None = None):
         self.session_file = Path(session_file)
         self.http = _new_http()
         self.token = ""
         self.student_code = ""
         self.fp = _fingerprint()
+        # 安全邮箱自动读码（可选）：启用后 full_login 在遇到二次认证时会
+        # 自动发码到安全邮箱 → IMAP 读码 → 完成验证，无需人工。
+        self.mail_mfa: dict[str, Any] = dict(mail_mfa_cfg or {})
+        self.mail_mfa_enabled = bool(self.mail_mfa.get("enabled"))
+        # 登录时是否登记为「可信客户端」（让后续登录免二次认证）
+        self.trust_agent = bool(self.mail_mfa.get("trust_agent", True)) and self.mail_mfa_enabled
         self._load()
 
     # ── persistence ──
@@ -170,6 +336,11 @@ class XkfwClient:
         self.session_file.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        # session.json 含 token 与 CAS cookie，收紧权限（0600），避免同机其它用户可读
+        try:
+            os.chmod(self.session_file, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
         log.info("session 已写入 %s", self.session_file)
 
     # ── health ──
@@ -307,6 +478,7 @@ class XkfwClient:
             dr = self.http.post(
                 f"{CAS}/cas/mfa/detect",
                 data={
+                    "loginType": "passwordLogin",
                     "username": account,
                     "password": enc_pwd,
                     "fpVisitorId": self.fp,
@@ -314,10 +486,14 @@ class XkfwClient:
                 timeout=15,
             )
             dj = dr.json()
-            need = ((dj or {}).get("data") or {}).get("need")
-            mfa_state = ((dj or {}).get("data") or {}).get("state") or ""
+            data = (dj or {}).get("data") or {}
+            need = data.get("need")
+            mfa_state = data.get("state") or ""
             if need:
-                raise MFARequired(state=mfa_state)
+                # 能用安全邮箱自动读码就自动完成；否则交给上层（人工/浏览器）
+                if not self._mfa_via_mail(mfa_state):
+                    raise MFARequired(state=mfa_state)
+                log.info("已通过安全邮箱自动完成二次认证")
         except MFARequired:
             raise
         except (requests.RequestException, ValueError, TypeError):
@@ -335,7 +511,7 @@ class XkfwClient:
             "_eventId": "submit",
             "geolocation": "",
             "fpVisitorId": self.fp,
-            "trustAgent": "",
+            "trustAgent": "true" if self.trust_agent else "",
             "submit1": "Login1",
         }
         r2 = self.http.post(cas_url, data=form, timeout=20, allow_redirects=True)
@@ -359,6 +535,56 @@ class XkfwClient:
 
         if not self._try_register(account):
             raise SessionError("登录后 register.do 未拿到 token")
+
+    def _mfa_via_mail(self, mfa_state: str) -> bool:
+        """安全邮箱自动验证：initByType → 发码 → IMAP 读码 → valid。
+
+        成功返回 True（后续表单提交带上 mfaState 即可完成登录）。
+        任何一步失败都返回 False，由调用方回退到「需要人工 MFA」。
+        绝不抛异常、绝不改 session.json。
+        """
+        if not self.mail_mfa_enabled or not mfa_state:
+            return False
+        try:
+            ir = self.http.get(
+                f"{CAS}/cas/mfa/initByType/secureemail",
+                params={"state": mfa_state},
+                timeout=20,
+            )
+            idata = (ir.json() or {}).get("data") or {}
+            gid = idata.get("gid")
+            attest = idata.get("attestServerUrl")
+            if not gid or not attest:
+                log.warning("安全邮箱验证未初始化（可能未绑定）: %s", str(idata)[:120])
+                return False
+
+            sent_at = time.time()
+            sr = self.http.post(
+                f"{attest}/api/guard/secureemail/send", json={"gid": gid}, timeout=20
+            )
+            if (sr.json() or {}).get("code") != 0:
+                log.warning("安全邮箱验证码发送失败: %s", (sr.text or "")[:120])
+                return False
+
+            code = read_mfa_code_from_mailbox(
+                self.mail_mfa,
+                since_ts=sent_at,
+                timeout_sec=float(self.mail_mfa.get("timeout_sec") or 180),
+            )
+            if not code:
+                return False
+
+            vr = self.http.post(
+                f"{attest}/api/guard/secureemail/valid",
+                json={"gid": gid, "code": code},
+                timeout=20,
+            )
+            vj = vr.json() or {}
+            vdata = vj.get("data") or {}
+            return _code_ok(vj.get("code")) and str(vdata.get("status")) == "2"
+        except (requests.RequestException, ValueError, TypeError, KeyError) as e:
+            log.warning("安全邮箱自动验证失败: %s", e)
+            return False
 
     def _try_register(self, account: str = "") -> bool:
         for num in ("null", self.student_code or "", account):

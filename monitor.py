@@ -144,27 +144,49 @@ def main() -> None:
         log.error("config 里 courses 为空")
         sys.exit(1)
 
-    client = XkfwClient(session_file=str(ROOT / (cfg.get("session_file") or "session.json")))
+    # 安全邮箱自动读码（可选）：mail_mfa.enabled=true 时，遇到二次认证会走
+    # 「发码到安全邮箱 → IMAP 读码 → 完成验证」，服务器无人值守也能自动续期。
+    mail_mfa_cfg = dict(cfg.get("mail_mfa") or {})
+    if mail_mfa_cfg.get("enabled"):
+        mail_mfa_cfg.setdefault("user", mail_cfg.get("from_addr"))
+        mail_mfa_cfg.setdefault("password", mail_cfg.get("password"))
+        mail_mfa_cfg.setdefault("provider", mail_cfg.get("provider") or "qq")
+
+    client = XkfwClient(
+        session_file=str(ROOT / (cfg.get("session_file") or "session.json")),
+        mail_mfa_cfg=mail_mfa_cfg,
+    )
     if cfg.get("student_code") and not client.student_code:
         client.student_code = str(cfg["student_code"])
 
+    startup_auth_failed = False
     try:
         client.ensure_session(account, password)
     except MFARequired as e:
+        startup_auth_failed = True
         log.error("%s", e)
-        log.error("服务器无交互 MFA 时：请在本机浏览器登录 xkfw，导出 token 到 session.json，再上传服务器。")
+        log.error(
+            "自动读码未成功。手动续期：python scripts/mfa_login.py start / verify --code 验证码；"
+            "或本机浏览器登录 xkfw 后导出 session.json 上传。服务不退出，会持续自动重试。"
+        )
         _notify_auth_fail(mail_cfg, str(e), webhook_cfg)
-        sys.exit(2)
     except CaptchaRequired as e:
+        startup_auth_failed = True
         log.error("%s", e)
+        log.error(
+            "需要验证码：请在浏览器里完成一次登录（或本机导出 session.json 上传）。"
+            "服务不退出，会持续自动重试。"
+        )
         _notify_auth_fail(mail_cfg, str(e), webhook_cfg)
-        sys.exit(2)
     except SessionError as e:
         # 临时故障(如 register.do 空壳)不退出：主循环的保活/恢复逻辑会持续重试，
         # 恢复后自动继续监控；若为永久故障，主循环的掉线通知会兜底提醒
         log.warning("启动时会话校验失败(临时故障?): %s，继续启动，后台自动重试", e)
 
     if args.login_only:
+        if startup_auth_failed:
+            log.error("登录未完成，session.json 未更新")
+            sys.exit(2)
         log.info("登录完成，session 已保存。可部署到服务器跑 python monitor.py")
         return
 

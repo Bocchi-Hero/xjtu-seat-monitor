@@ -124,9 +124,28 @@ def merge_config_update(body: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+def make_client(cfg: dict[str, Any]) -> XkfwClient:
+    """构造 XkfwClient，并把 mail_mfa（安全邮箱自动读码）配置接进去。
+
+    mail_mfa.enabled=true 时，遇到二次认证会自动「发码到安全邮箱 → IMAP 读码
+    → 完成验证」，面板的「登录选课」和监控都无需人工介入。
+    user/password 缺省复用 mail.from_addr / mail.password。
+    """
+    mail_cfg = cfg.get("mail") or {}
+    mail_mfa_cfg = dict(cfg.get("mail_mfa") or {})
+    if mail_mfa_cfg.get("enabled"):
+        mail_mfa_cfg.setdefault("user", mail_cfg.get("from_addr"))
+        mail_mfa_cfg.setdefault("password", mail_cfg.get("password"))
+        mail_mfa_cfg.setdefault("provider", mail_cfg.get("provider") or "qq")
+    return XkfwClient(
+        str(ROOT / (cfg.get("session_file") or "session.json")),
+        mail_mfa_cfg=mail_mfa_cfg,
+    )
+
+
 def session_info(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = cfg or load_cfg()
-    client = XkfwClient(str(ROOT / (cfg.get("session_file") or "session.json")))
+    client = make_client(cfg)
     alive = False
     try:
         alive = client.is_alive()
@@ -143,7 +162,7 @@ def session_info(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
 
 def do_login(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = cfg or load_cfg()
-    client = XkfwClient(str(ROOT / (cfg.get("session_file") or "session.json")))
+    client = make_client(cfg)
     account = str(cfg.get("account") or "")
     password = str(cfg.get("password") or "")
     if not account or not password:
@@ -156,7 +175,14 @@ def do_login(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
             "alive": client.is_alive(),
         }
     except MFARequired as e:
-        return {"ok": False, "error": f"需要 MFA：{e}。请浏览器登录后导出 session，或本机完成二次验证。"}
+        return {
+            "ok": False,
+            "error": (
+                f"需要二次认证：{e}。"
+                "已在 config.yaml 打开 mail_mfa 时会自动读安全邮箱验证码；"
+                "否则可执行 scripts/mfa_login.py start --wait-mail 完成续期。"
+            ),
+        }
     except CaptchaRequired as e:
         return {"ok": False, "error": f"需要验证码：{e}"}
     except SessionError as e:
@@ -167,7 +193,7 @@ def do_login(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
 
 def check_capacities(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = cfg or load_cfg()
-    client = XkfwClient(str(ROOT / (cfg.get("session_file") or "session.json")))
+    client = make_client(cfg)
     try:
         if not client.is_alive():
             client.ensure_session(str(cfg.get("account") or ""), str(cfg.get("password") or ""))

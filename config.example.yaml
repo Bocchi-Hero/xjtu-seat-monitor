@@ -38,5 +38,21 @@ mail:
   # port: 465
   # use_ssl: true
 
+# 安全邮箱自动读码（可选；服务器无人值守时建议开启）
+# CAS 统一认证在新设备 / 长期未登录时会要求二次认证（安全邮箱验证码）。
+# 开启后本程序会「发码到安全邮箱 → 通过 IMAP 读码 → 自动完成验证」，
+# 并把本机登记为「可信客户端」(trustAgent)，之后动态策略默认跳过二次认证。
+# user / password 缺省复用上面的 mail.from_addr / mail.password
+# （QQ 邮箱授权码同时可用于 SMTP 与 IMAP，需在邮箱设置里开启 IMAP/SMTP 服务）。
+mail_mfa:
+  enabled: false          # 需要时改 true
+  trust_agent: true       # 登录成功后登记为可信客户端，后续免二次认证
+  provider: qq            # qq / gmail
+  # host: "imap.qq.com"   # 可显式覆盖
+  # port: 993
+  # user: "you@qq.com"
+  # password: "AUTH_CODE"
+  timeout_sec: 180        # 等待验证码邮件的最长秒数
+
 session_file: "session.json"
 log_file: "monitor.log"
