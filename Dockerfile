@@ -10,7 +10,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY config.example.yaml ./
-COPY auth_session.py mailer.py monitor.py ./
+COPY auth_session.py mailer.py monitor.py notifier.py ./
 
 # Mount config.yaml + session.json at runtime
 CMD ["python", "-u", "monitor.py"]
