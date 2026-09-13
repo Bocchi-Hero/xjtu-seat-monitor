@@ -144,6 +144,18 @@ def main() -> None:
         log.error("config 里 courses 为空")
         sys.exit(1)
 
+    # 业务级会话验收用：任取一门真实课程。capacity.do 能通过才算真恢复 ——
+    # 只靠 register.do + dictionary.do 会出现「假恢复」（token 换了但 xkfw 登录态
+    # 已失效，容量接口一直回「未查询到登录信息」），监控会陷入静默死循环。
+    verify_tcid = next(
+        (
+            str(c.get("teaching_class_id") or "").strip()
+            for c in courses
+            if str(c.get("teaching_class_id") or "").strip()
+        ),
+        "",
+    )
+
     # 安全邮箱自动读码（可选）：mail_mfa.enabled=true 时，遇到二次认证会走
     # 「发码到安全邮箱 → IMAP 读码 → 完成验证」，服务器无人值守也能自动续期。
     mail_mfa_cfg = dict(cfg.get("mail_mfa") or {})
@@ -161,7 +173,7 @@ def main() -> None:
 
     startup_auth_failed = False
     try:
-        client.ensure_session(account, password)
+        client.ensure_session(account, password, verify_tcid=verify_tcid)
     except MFARequired as e:
         startup_auth_failed = True
         log.error("%s", e)
@@ -250,7 +262,7 @@ def main() -> None:
         round_i += 1
         if round_i % check_every == 1:
             try:
-                client.ensure_session(account, password)
+                client.ensure_session(account, password, verify_tcid=verify_tcid)
                 if not session_ok:
                     log.info("会话已恢复")
                 session_ok = True
@@ -283,7 +295,9 @@ def main() -> None:
                 session_error_this_round = True
                 consecutive_session_fails += 1
                 try:
-                    client.ensure_session(account, password)
+                    # ensure_session 现在会做业务级验收（capacity.do 真能通过），
+                    # 不会再出现「宣称已恢复、实际一直查不到」的假恢复
+                    client.ensure_session(account, password, verify_tcid=tcid)
                     session_ok = True
                     log.info("会话已自动恢复，继续监控")
                     # 已恢复 → 清零计数，不再发「掉线」邮件，避免恢复后误报

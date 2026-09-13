@@ -67,6 +67,18 @@ class CaptchaRequired(SessionError):
         super().__init__(message or "需要验证码，请本机浏览器/GUI 登录后导出 session")
 
 
+class TokenRejected(SessionError):
+    """业务接口（capacity.do）拒绝当前 token：token 已不被承认。
+
+    区别于「空壳/网络抖动」：这类错误说明 xkfw 端的登录态（app 会话）已经没了，
+    仅靠 register.do 换 token 是**假恢复** —— 必须重新走一次 CAS 登录把 app 会话
+    建回来。见 XkfwClient.ensure_session()。
+    """
+
+    def __init__(self, message: str = ""):
+        super().__init__(message or "token 未被接受（登录态已失效）")
+
+
 def _new_http() -> requests.Session:
     s = requests.Session()
     s.headers.update(
@@ -394,16 +406,44 @@ class XkfwClient:
             time.sleep(1.5)
         return False
 
-    def ensure_session(self, account: str, password: str) -> None:
-        # 优先通过 register.do 刷新 token（轻量，不依赖 cookie 有效性）
-        # 不依赖 is_alive() 判断：dictionary.do 对过期 token 也返回 200，
-        # 而 capacity.do 会拒绝，造成死循环。始终刷新 token 最可靠。
-        if self.refresh_token() and self.is_alive():
+    def ensure_session(self, account: str, password: str, verify_tcid: str = "") -> None:
+        """确保会话真正可用（不只是"看起来活着"）。
+
+        历史坑（2026-09-13 实测）：
+          1) dictionary.do / register.do 可能都成功，但 capacity.do 仍回
+             「未查询到登录信息」—— xkfw 的**登录态（app 会话）**已经没了，
+             register.do 只会发一个不被承认的新 token，属于**假恢复**：
+             监控于是无限循环"已恢复→查容量失败"，既不报警也不监控。
+          2) 只有重新走一次完整 CAS 登录（GET xkfw → CAS 自动发票 → 新的
+             JSESSIONID/GS_SESSIONID）才能把登录态建回来。
+
+        因此这里用 verify_tcid（一门真实课程）做**业务级**验收：
+        凡是"探活通过但容量接口拒绝 token"，一律视为未恢复并升级到完整登录。
+        """
+        if self.refresh_token() and self.is_alive() and self._operational_ok(verify_tcid):
             return
-        log.info("会话失效，尝试完整 CAS 登录…")
+        log.info("会话失效（或 token 不被业务接口接受），尝试完整 CAS 登录…")
         self.full_login(account, password)
         if not self.is_alive():
             raise SessionError("登录后会话仍无效")
+        if not self._operational_ok(verify_tcid):
+            raise SessionError("登录后容量接口仍拒绝该 token（登录态未建立）")
+
+    def _operational_ok(self, tcid: str) -> bool:
+        """业务级验收：用一门真实课程调 capacity.do。
+
+        只有明确"token 不被承认"（TokenRejected）才算会话问题；
+        空壳/网络抖动等其它 SessionError 不算（避免高峰抖动触发登录风暴）。
+        """
+        if not tcid:
+            return True
+        try:
+            self.check_capacity(tcid)
+            return True
+        except TokenRejected:
+            return False
+        except SessionError:
+            return True
 
     # ── capacity ──
 
@@ -433,7 +473,9 @@ class XkfwClient:
         if isinstance((j or {}).get("code"), str) and j.get("code") not in ("0", "1", ""):
             msg = j.get("msg") or str(j.get("code"))
             if "登录" in msg or "token" in msg.lower():
-                raise SessionError(msg)
+                # 明确"token 不被承认"：app 登录态已失效，换 token 无用，
+                # 需要完整 CAS 登录重建会话（见 ensure_session / _operational_ok）
+                raise TokenRejected(msg)
 
         # 高峰期间 xkfw 偶发返回空壳 {"data":null,"code":null}（几分钟自愈）。
         # 空壳绝不能当成"已满 0/0"——那会静默错过空位；视为会话级异常，
@@ -586,24 +628,34 @@ class XkfwClient:
             log.warning("安全邮箱自动验证失败: %s", e)
             return False
 
-    def _try_register(self, account: str = "") -> bool:
-        for num in ("null", self.student_code or "", account):
-            if num is None or num == "":
-                continue
-            url = f"{XKFW}/xsxkapp/sys/xsxkapp/student/register.do"
-            try:
-                r = self.http.get(url, params={"number": num}, timeout=15)
-                j = r.json()
-            except (requests.RequestException, ValueError):
-                continue
-            if _code_ok((j or {}).get("code")) and ((j or {}).get("data") or {}).get("token"):
-                self.token = j["data"]["token"]
-                if j["data"].get("number"):
-                    self.student_code = j["data"]["number"]
-                self.http.headers["Token"] = self.token
-                self.save()
-                log.info("register 成功 student=%s", self.student_code)
-                return True
+    def _try_register(self, account: str = "", attempts: int = 3) -> bool:
+        """GET register.do 换 token。
+
+        register.do 会偶发返回空壳 {"data":null,"code":null}（几分钟自愈）。
+        原先这里每个候选只试一次，抖动期间会让 full_login 直接抛
+        「无法解析 CAS execution」而放弃恢复（2026-09-13 实测踩到）；
+        改成和 refresh_token() 一样的多轮重试。
+        """
+        for attempt in range(max(1, attempts)):
+            for num in ("null", self.student_code or "", account):
+                if num is None or num == "":
+                    continue
+                url = f"{XKFW}/xsxkapp/sys/xsxkapp/student/register.do"
+                try:
+                    r = self.http.get(url, params={"number": num}, timeout=15)
+                    j = r.json()
+                except (requests.RequestException, ValueError):
+                    continue
+                if _code_ok((j or {}).get("code")) and ((j or {}).get("data") or {}).get("token"):
+                    self.token = j["data"]["token"]
+                    if j["data"].get("number"):
+                        self.student_code = j["data"]["number"]
+                    self.http.headers["Token"] = self.token
+                    self.save()
+                    log.info("register 成功 student=%s", self.student_code)
+                    return True
+            if attempt < attempts - 1:
+                time.sleep(1.5)
         return False
 
 

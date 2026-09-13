@@ -160,6 +160,15 @@ def session_info(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+def _first_tcid(cfg: dict[str, Any]) -> str:
+    """任取一门课程的 teaching_class_id，用于业务级会话验收。"""
+    for c in cfg.get("courses") or []:
+        tcid = str(c.get("teaching_class_id") or "").strip()
+        if tcid:
+            return tcid
+    return ""
+
+
 def do_login(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = cfg or load_cfg()
     client = make_client(cfg)
@@ -168,7 +177,9 @@ def do_login(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     if not account or not password:
         return {"ok": False, "error": "请先在面板填写学号/账号和密码并保存"}
     try:
-        client.ensure_session(account, password)
+        # verify_tcid：用真实课程的容量接口确认登录态真的可用，
+        # 否则"登录成功"可能只是假恢复（token 换了但容量接口仍拒绝）
+        client.ensure_session(account, password, verify_tcid=_first_tcid(cfg))
         return {
             "ok": True,
             "student_code": client.student_code,
@@ -196,7 +207,11 @@ def check_capacities(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     client = make_client(cfg)
     try:
         if not client.is_alive():
-            client.ensure_session(str(cfg.get("account") or ""), str(cfg.get("password") or ""))
+            client.ensure_session(
+                str(cfg.get("account") or ""),
+                str(cfg.get("password") or ""),
+                verify_tcid=_first_tcid(cfg),
+            )
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"会话无效: {e}", "courses": []}
 

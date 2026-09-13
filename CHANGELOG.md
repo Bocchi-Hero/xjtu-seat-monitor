@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-09-13
+
+### Fixed
+
+- **False session recovery — the monitor could sit in a silent dead loop.**
+  `ensure_session()` accepted "recovered" as soon as `register.do` (token refresh) and
+  `dictionary.do` (liveness probe) both succeeded. But xkfw keeps a separate
+  server-side login state (app session, `JSESSIONID`/`GS_SESSIONID`): once that is
+  gone, `register.do` still hands out a token that `capacity.do` rejects with
+  `未查询到登录信息` ("no login info found"). Observed live: the monitor logged
+  "会话已自动恢复" every ~15s while every capacity query kept failing — no alerts sent,
+  no courses actually monitored. Only a full CAS login (fresh app-session cookies)
+  restores it.
+  - `ensure_session(account, password, verify_tcid="")` now verifies against the
+    **operational** API: it makes one real `capacity.do` call for a configured course
+    and escalates to a full CAS login when the token is rejected.
+  - New `TokenRejected(SessionError)` separates "token not accepted" from transient API
+    noise (empty shell / network glitches), so a peak-time empty shell cannot trigger a
+    login storm.
+  - `monitor.py` and `panel_service.py` pass the verification course (`verify_tcid`) at
+    every `ensure_session()` call site.
+
+- **`_try_register()` had no retry.** `register.do` intermittently returns the empty
+  shell `{"data":null,"code":null}` for minutes at a time; because each candidate was
+  tried only once, one flaky window made `full_login()` give up with
+  "无法解析 CAS execution，页面可能已变" instead of recovering. It now retries the same
+  way `refresh_token()` does (3 rounds × 3 candidates, 1.5s apart).
+
+### Added
+
+- Regression tests for the false-recovery path (`tests/test_auth_session.py`): a
+  rejected token must force a full login, an empty shell must not, and a healthy
+  session must not trigger one either.
+
 ## [0.3.0] - 2026-09-13
 
 ### Added
